@@ -1,12 +1,12 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#include <unistd.h> // Adicione esta linha para definir pid_t
+#include <unistd.h> 
 
 #define SERVER_PIPE "/tmp/server_pipe"
 #define CLIENT_PIPE_PREFIX "/tmp/client_pipe_"
 
-// Tamanhos máximos dos campos
+// Tamanhos máximos dos campossssss
 #define MAX_TITLE_SIZE 200
 #define MAX_AUTHORS_SIZE 200
 #define MAX_PATH_SIZE 64
@@ -30,7 +30,7 @@ typedef struct {
     char path[MAX_PATH_SIZE];       // Caminho do arquivo
 } Document;
 
-// Estrutura para mensagens do cliente para o servidor
+// Estrutura para mensagens do cliente para o servidorrrrr
 typedef struct {
     int operation;      // Tipo de operação (OP_ADD, OP_CONSULT, etc.)
     pid_t pid;          // PID do cliente para identificação
