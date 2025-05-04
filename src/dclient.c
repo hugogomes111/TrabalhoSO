@@ -7,7 +7,7 @@
 #include <fcntl.h>
 #include "../include/common.h"
 
-// Função para exibir uso correto
+
 void show_usage(char *program_name) {
     fprintf(stderr, "Uso:\n");
     fprintf(stderr, "  %s -a \"title\" \"authors\" \"year\" \"path\"\n", program_name);
@@ -19,9 +19,9 @@ void show_usage(char *program_name) {
     fprintf(stderr, "  %s -f\n", program_name);
 }
 
-// Cria pipe do cliente
+// Cria pipe do clienteeee
 int create_client_pipe(char *pipe_name) {
-    unlink(pipe_name);  // Remover se já existir
+    unlink(pipe_name);  // Remove se já existir
     if (mkfifo(pipe_name, 0666) == -1) {
         perror("Erro ao criar pipe do cliente");
         return -1;
@@ -29,7 +29,7 @@ int create_client_pipe(char *pipe_name) {
     return 0;
 }
 
-// Envia mensagem para o servidor e recebe resposta
+// Envia mensagem para o servidor e recebe respostaa
 int send_receive(ClientMessage *msg, ServerMessage *response, char *client_pipe) {
     // Criar pipe do cliente
     if (create_client_pipe(client_pipe) < 0) {
@@ -59,23 +59,23 @@ int send_receive(ClientMessage *msg, ServerMessage *response, char *client_pipe)
     read(client_fd, response, sizeof(ServerMessage));
     close(client_fd);
     
-    // Remover pipe do cliente
+    // Remove pipe do cliente
     unlink(client_pipe);
     
     return 0;
 }
 
 int main(int argc, char *argv[]) {
-    // Verificar se há argumentos suficientes
+    // Verifica se há argumentos suficientes
     if (argc < 2) {
         show_usage(argv[0]);
         return 1;
     }
     
-    // Identificar operação solicitada
+    // Identifica operação solicitada
     char *option = argv[1];
     
-    // Construir pipe do cliente
+    // Constroi pipe do cliente
     char client_pipe[100];
     sprintf(client_pipe, "%s%d", CLIENT_PIPE_PREFIX, getpid());
     
@@ -156,7 +156,7 @@ int main(int argc, char *argv[]) {
         }
     }
     else if (strcmp(option, "-l") == 0) {
-        // Contar linhas com palavra-chave
+        // Conta linhas com palavra-chave
         if (argc != 4) {
             fprintf(stderr, "Uso incorreto do comando -l\n");
             show_usage(argv[0]);
@@ -178,7 +178,7 @@ int main(int argc, char *argv[]) {
         }
     }
     else if (strcmp(option, "-s") == 0) {
-        // Pesquisar documentos com palavra-chave
+        // Pesquisa documentos com palavra-chave
         if (argc < 3 || argc > 4) {
             fprintf(stderr, "Uso incorreto do comando -s\n");
             show_usage(argv[0]);

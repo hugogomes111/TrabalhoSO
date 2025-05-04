@@ -33,7 +33,7 @@ int initialize_server() {
         return -1;
     }
     
-    printf("Servidor iniciado. Aguardando conexões...\n");
+    printf("Servidor iniciado. Aguardar conexões...\n");
     return 0;
 }
 
@@ -194,7 +194,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    printf("Aguardando conexões de clientes...\n");
+    printf("Aguardar conexões de clientes...\n");
     
     // Loop principal do servidor
     ClientMessage client_msg;
@@ -219,7 +219,7 @@ int main(int argc, char *argv[]) {
             // Processar mensagem de acordo com a operação
             switch(client_msg.operation) {
                 case OP_ADD:
-                    printf("Adicionando documento: %s\n", client_msg.title);
+                    printf("A Adicionar documento: %s\n", client_msg.title);
                     server_response.doc_id = add_document(&client_msg);
                     
                     if (server_response.doc_id > 0) {
@@ -234,7 +234,7 @@ int main(int argc, char *argv[]) {
                     break;
                     
                 case OP_CONSULT:
-                    printf("Consultando documento: %d\n", client_msg.doc_id);
+                    printf("Consultar documento: %d\n", client_msg.doc_id);
                     if (consult_document(client_msg.doc_id, &server_response.doc) == 0) {
                         server_response.status = 0;
                     } else {
@@ -244,7 +244,7 @@ int main(int argc, char *argv[]) {
                     break;
                     
                 case OP_DELETE:
-                    printf("Removendo documento: %d\n", client_msg.doc_id);
+                    printf("Remover documento: %d\n", client_msg.doc_id);
                     if (delete_document(client_msg.doc_id) == 0) {
                         server_response.status = 0;
                     } else {
@@ -254,7 +254,7 @@ int main(int argc, char *argv[]) {
                     break;
                     
                 case OP_LINES:
-                    printf("Contando linhas no documento %d com palavra-chave: %s\n", 
+                    printf("Contar linhas no documento %d com palavra-chave: %s\n", 
                            client_msg.doc_id, client_msg.keyword);
                     server_response.line_count = count_lines(client_msg.doc_id, client_msg.keyword);
                     
@@ -270,7 +270,7 @@ int main(int argc, char *argv[]) {
                     break;
                     
                 case OP_SEARCH:
-                    printf("Pesquisando documentos com palavra-chave: %s (processos: %d)\n", 
+                    printf("Pesquisar documentos com palavra-chave: %s (processos: %d)\n", 
                            client_msg.keyword, client_msg.nr_processes);
                     server_response.doc_count = search_documents(client_msg.keyword, 
                                                                 server_response.doc_ids, 

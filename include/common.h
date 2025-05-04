@@ -21,7 +21,7 @@
 #define OP_SEARCH 5     // -s: Pesquisar documentos com palavra-chave
 #define OP_SHUTDOWN 6   // -f: Desligar servidor
 
-// Estrutura para metadados de documentos
+// Estrutura para metadados de documentosss
 typedef struct {
     int id;                         // ID único do documento
     char title[MAX_TITLE_SIZE];     // Título
@@ -32,9 +32,9 @@ typedef struct {
 
 // Estrutura para mensagens do cliente para o servidorrrrr
 typedef struct {
-    int operation;      // Tipo de operação (OP_ADD, OP_CONSULT, etc.)
-    pid_t pid;          // PID do cliente para identificação
-    int doc_id;         // ID do documento (para consulta/remoção)
+    int operation;      // Tipo de operação e etc (OP_ADD, OP_CONSULT, etc.)
+    pid_t pid;          // PID do cliente para identificação é como se fosse um id normal
+    int doc_id;         // ID do documento 
     char title[MAX_TITLE_SIZE];     // Para operação ADD
     char authors[MAX_AUTHORS_SIZE]; // Para operação ADD
     char year[MAX_YEAR_SIZE];       // Para operação ADD
