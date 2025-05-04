@@ -291,7 +291,7 @@ int main(int argc, char *argv[]) {
                     
                     // Encerrar o servidor
                     close(server_pipe);
-                    // Não chame cleanup() aqui, pois já está registrado com atexit()
+                    
                     exit(0);
                     break;
                     
@@ -315,7 +315,7 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    // Este código nunca será alcançado, mas por completude:
+  
     close(server_pipe);
     
     return 0;
