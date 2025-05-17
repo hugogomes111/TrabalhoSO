@@ -6,7 +6,11 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
-#include "../include/common.h"
+// [NOVO] Adicionado header de tempo para funções time()
+#include <time.h>
+// [NOVO] Adicionado header para função waitpid() usada no processamento paralelo
+#include <sys/wait.h>
+#include "common.h"
 
 // Variáveis globais
 char document_folder[MAX_PATH_SIZE];
@@ -14,6 +18,72 @@ int cache_size;
 Document *documents = NULL;  // Array de documentos
 int next_id = 1;             // Próximo ID disponível
 int num_documents = 0;       // Número atual de documentos
+// [NOVO] Array para armazenar o último acesso a cada documento (para política LRU)
+time_t *last_access = NULL;  // Para política de cache LRU
+
+// [NOVO] Declaração de funções adicionada
+int search_documents_sequential(const char *keyword, int *doc_ids, int max_results);
+int search_for_keyword(const char *filepath, const char *keyword);
+int count_keyword_lines(const char *filepath, const char *keyword);
+
+// [NOVO] Função para salvar dados em disco - persistência do cache
+int save_data() {
+    char data_file[MAX_PATH_SIZE];
+    sprintf(data_file, "%s/.index_data", document_folder);
+    
+    int fd = open(data_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        perror("Erro ao abrir arquivo de dados");
+        return -1;
+    }
+    
+    // Salvar número de documentos e próximo ID
+    write(fd, &num_documents, sizeof(int));
+    write(fd, &next_id, sizeof(int));
+    
+    // Salvar documentos
+    for (int i = 0; i < num_documents; i++) {
+        write(fd, &documents[i], sizeof(Document));
+    }
+    
+    close(fd);
+    return 0;
+}
+
+// [NOVO] Função para carregar dados do disco - persistência do cache
+int load_data() {
+    char data_file[MAX_PATH_SIZE];
+    sprintf(data_file, "%s/.index_data", document_folder);
+    
+    // Verificar se arquivo existe
+    if (access(data_file, F_OK) == -1) {
+        return 0; // Arquivo não existe, não é erro
+    }
+    
+    int fd = open(data_file, O_RDONLY);
+    if (fd == -1) {
+        perror("Erro ao abrir arquivo de dados");
+        return -1;
+    }
+    
+    // Carregar número de documentos e próximo ID
+    read(fd, &num_documents, sizeof(int));
+    read(fd, &next_id, sizeof(int));
+    
+    // Verificar se não excede o tamanho do cache
+    if (num_documents > cache_size) {
+        num_documents = cache_size; // Limitar ao tamanho do cache
+    }
+    
+    // Carregar documentos
+    for (int i = 0; i < num_documents; i++) {
+        read(fd, &documents[i], sizeof(Document));
+        last_access[i] = time(NULL); // Inicializar timestamps
+    }
+    
+    close(fd);
+    return 0;
+}
 
 // Função para inicializar o servidor
 int initialize_server() {
@@ -29,44 +99,92 @@ int initialize_server() {
     // Alocar memória para documentos
     documents = (Document*)malloc(sizeof(Document) * cache_size);
     if (!documents) {
-        perror("Erro ao alocar memória");
+        // [MODIFICADO] Mensagem de erro mais específica
+        perror("Erro ao alocar memória para documentos");
         return -1;
     }
     
-    printf("Servidor iniciado. Aguardar conexões...\n");
+    // [NOVO] Alocação de memória para os timestamps de último acesso
+    last_access = (time_t*)malloc(sizeof(time_t) * cache_size);
+    if (!last_access) {
+        perror("Erro ao alocar memória para timestamps");
+        free(documents);
+        return -1;
+    }
+    
+    // [NOVO] Inicialização dos timestamps
+    for (int i = 0; i < cache_size; i++) {
+        last_access[i] = 0;
+    }
+    
+    // [NOVO] Carregar dados do disco ao iniciar
+    if (load_data() < 0) {
+        perror("Erro ao carregar dados");
+        // Continuar mesmo com erro
+    }
+    
+    // [MODIFICADO] Mensagem ligeiramente diferente
+    printf("Servidor iniciado. Aguardando conexões...\n");
     return 0;
 }
 
 // Limpar recursos ao encerrar
 void cleanup() {
+    // [NOVO] Salvar dados antes de encerrar
+    save_data();
+    
     if (documents != NULL) {
         free(documents);
-        documents = NULL;  // Importante definir como NULL após liberar
+        documents = NULL;
     }
+    
+    // [NOVO] Liberar memória dos timestamps
+    if (last_access != NULL) {
+        free(last_access);
+        last_access = NULL;
+    }
+    
     unlink(SERVER_PIPE);
     printf("Servidor encerrado.\n");
 }
 
+// [NOVO] Funções para implementar a política de cache LRU (Least Recently Used)
+void update_access(int index) {
+    last_access[index] = time(NULL);
+}
+
+// [NOVO] Função para encontrar o documento menos recentemente usado
+int find_lru_index() {
+    time_t oldest = time(NULL);
+    int oldest_index = 0;
+    
+    for (int i = 0; i < num_documents; i++) {
+        if (last_access[i] < oldest) {
+            oldest = last_access[i];
+            oldest_index = i;
+        }
+    }
+    
+    return oldest_index;
+}
+
 // Adicionar um documento
 int add_document(ClientMessage *msg) {
-    if (num_documents >= cache_size) {
-        return -1; // Cache cheio
-    }
+    // [MODIFICADO] Removida a verificação de cache cheio, agora usa LRU
     
     // Verificar se o documento existe
     char full_path[MAX_PATH_SIZE * 2];
     sprintf(full_path, "%s/%s", document_folder, msg->path);
     
-    // Verificar se o arquivo existe
     if (access(full_path, F_OK) == -1) {
         return -2; // Arquivo não existe
     }
     
-    // Adicionar documento
+    // Criar novo documento
     Document doc;
     doc.id = next_id++;
     strncpy(doc.title, msg->title, MAX_TITLE_SIZE - 1);
-    doc.title[MAX_TITLE_SIZE - 1] = '\0';  // Garantir terminação
+    doc.title[MAX_TITLE_SIZE - 1] = '\0';
     strncpy(doc.authors, msg->authors, MAX_AUTHORS_SIZE - 1);
     doc.authors[MAX_AUTHORS_SIZE - 1] = '\0';
     strncpy(doc.year, msg->year, MAX_YEAR_SIZE - 1);
@@ -74,7 +192,23 @@ int add_document(ClientMessage *msg) {
     strncpy(doc.path, msg->path, MAX_PATH_SIZE - 1);
     doc.path[MAX_PATH_SIZE - 1] = '\0';
     
-    documents[num_documents++] = doc;
+    // [NOVO] Implementação da política LRU para o cache
+    int index;
+    if (num_documents < cache_size) {
+        // Ainda há espaço no cache
+        index = num_documents++;
+        documents[index] = doc;
+    } else {
+        // Cache cheio, usar política LRU
+        index = find_lru_index();
+        documents[index] = doc;
+    }
+    
+    // [NOVO] Atualizar timestamp de acesso
+    update_access(index);
+    
+    // [NOVO] Persistir dados em disco
+    save_data();
     
     return doc.id;
 }
@@ -84,6 +218,8 @@ int consult_document(int doc_id, Document *doc) {
     for (int i = 0; i < num_documents; i++) {
         if (documents[i].id == doc_id) {
             *doc = documents[i];
+            // [NOVO] Atualizar timestamp de acesso
+            update_access(i);
             return 0;
         }
     }
@@ -97,15 +233,70 @@ int delete_document(int doc_id) {
             // Mover o último documento para a posição do documento removido
             if (i < num_documents - 1) {
                 documents[i] = documents[num_documents - 1];
+                // [NOVO] Atualizar timestamp
+                last_access[i] = last_access[num_documents - 1];
             }
             num_documents--;
+            
+            // [NOVO] Persistir dados em disco
+            save_data();
             return 0;
         }
     }
     return -1; // Documento não encontrado
 }
 
-// Contar linhas com uma palavra-chave
+// [CORRIGIDO] Função para verificar se uma linha contém uma palavra-chave
+int line_contains_keyword(const char *line, const char *keyword) {
+    char *pos = strstr(line, keyword);
+    return (pos != NULL);
+}
+
+// [CORRIGIDO] Nova função para contar linhas que contêm uma palavra-chave
+int count_keyword_lines(const char *filepath, const char *keyword) {
+    int fd = open(filepath, O_RDONLY);
+    if (fd == -1) {
+        return -2; // Erro ao abrir arquivo
+    }
+    
+    char buffer[4096];
+    char line[1024];
+    int line_count = 0;
+    int line_pos = 0;
+    int bytes_read;
+    
+    while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
+        for (int i = 0; i < bytes_read; i++) {
+            // Construir a linha caractere por caractere
+            if (buffer[i] != '\n' && line_pos < 1023) {
+                line[line_pos++] = buffer[i];
+            } else {
+                line[line_pos] = '\0'; // Finalizar a linha
+                
+                // Verificar se a linha contém a palavra-chave
+                if (line_contains_keyword(line, keyword)) {
+                    line_count++;
+                }
+                
+                // Reiniciar para a próxima linha
+                line_pos = 0;
+            }
+        }
+    }
+    
+    // Verificar a última linha se não terminar com \n
+    if (line_pos > 0) {
+        line[line_pos] = '\0';
+        if (line_contains_keyword(line, keyword)) {
+            line_count++;
+        }
+    }
+    
+    close(fd);
+    return line_count;
+}
+
+// [CORRIGIDO] Contar linhas com uma palavra-chave
 int count_lines(int doc_id, const char *keyword) {
     Document doc;
     if (consult_document(doc_id, &doc) != 0) {
@@ -116,26 +307,40 @@ int count_lines(int doc_id, const char *keyword) {
     char full_path[MAX_PATH_SIZE * 2];
     sprintf(full_path, "%s/%s", document_folder, doc.path);
     
-    // Construir comando grep
-    char command[512];
-    sprintf(command, "grep -c \"%s\" \"%s\"", keyword, full_path);
-    
-    // Executar comando
-    FILE *fp = popen(command, "r");
-    if (fp == NULL) {
-        return -2; // Erro ao executar comando
-    }
-    
-    // Ler resultado
-    char buffer[32];
-    fgets(buffer, sizeof(buffer), fp);
-    pclose(fp);
-    
-    return atoi(buffer);
+    // Usar nossa nova função para contar linhas
+    return count_keyword_lines(full_path, keyword);
 }
 
-// Pesquisar documentos com uma palavra-chave
-int search_documents(const char *keyword, int *doc_ids, int max_results) {
+// [CORRIGIDO] Função para verificar se um arquivo contém uma palavra-chave
+int search_for_keyword(const char *filepath, const char *keyword) {
+    int fd = open(filepath, O_RDONLY);
+    if (fd == -1) {
+        perror("Erro ao abrir arquivo para busca");
+        return 0; // Arquivo não existe ou erro
+    }
+    
+    char buffer[4096];
+    int bytes_read;
+    int result = 0;
+    
+    while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
+        // Garantir que o buffer termine com \0 para usar strstr
+        char temp_buffer[4097];
+        memcpy(temp_buffer, buffer, bytes_read);
+        temp_buffer[bytes_read] = '\0';
+        
+        if (strstr(temp_buffer, keyword) != NULL) {
+            result = 1;
+            break;
+        }
+    }
+    
+    close(fd);
+    return result;
+}
+
+// [CORRIGIDO] Função de pesquisa sequencial - substitui a versão que usava system()
+int search_documents_sequential(const char *keyword, int *doc_ids, int max_results) {
     int count = 0;
     
     for (int i = 0; i < num_documents && count < max_results; i++) {
@@ -143,16 +348,105 @@ int search_documents(const char *keyword, int *doc_ids, int max_results) {
         char full_path[MAX_PATH_SIZE * 2];
         sprintf(full_path, "%s/%s", document_folder, documents[i].path);
         
-        // Construir comando grep
-        char command[512];
-        sprintf(command, "grep -q \"%s\" \"%s\"", keyword, full_path);
-        
-        // Executar comando
-        int result = system(command);
-        if (result == 0) {
+        // Usar nossa própria função de busca
+        if (search_for_keyword(full_path, keyword)) {
             // Palavra-chave encontrada
             doc_ids[count++] = documents[i].id;
         }
+    }
+    
+    return count;
+}
+
+// [CORRIGIDO] Implementação de pesquisa paralela com múltiplos processos
+int search_documents(const char *keyword, int *doc_ids, int max_results, int nr_processes) {
+    // Se nr_processes for 1 ou menos, usar método sequencial
+    if (nr_processes <= 1) {
+        return search_documents_sequential(keyword, doc_ids, max_results);
+    }
+    
+    int count = 0;
+    int pipes[nr_processes][2];
+    pid_t pids[nr_processes];
+    
+    // Limitar número de processos ao número de documentos
+    if (nr_processes > num_documents) {
+        nr_processes = num_documents;
+    }
+    
+    // Criar pipes para comunicação
+    for (int i = 0; i < nr_processes; i++) {
+        if (pipe(pipes[i]) == -1) {
+            perror("Erro ao criar pipe");
+            return -1;
+        }
+    }
+    
+    // Dividir documentos entre processos
+    int docs_per_process = (num_documents + nr_processes - 1) / nr_processes;
+    
+    // Criar processos filhos
+    for (int i = 0; i < nr_processes; i++) {
+        pids[i] = fork();
+        
+        if (pids[i] == -1) {
+            perror("Erro ao criar processo");
+            return -1;
+        }
+        
+        if (pids[i] == 0) {
+            // Código do processo filho
+            close(pipes[i][0]); // Fechar extremidade de leitura
+            
+            int start = i * docs_per_process;
+            int end = (i + 1) * docs_per_process;
+            if (end > num_documents) end = num_documents;
+            
+            int child_count = 0;
+            int child_results[end - start];
+            
+            // Pesquisar documentos alocados a este processo
+            for (int j = start; j < end; j++) {
+                char full_path[MAX_PATH_SIZE * 2];
+                sprintf(full_path, "%s/%s", document_folder, documents[j].path);
+                
+                // [CORRIGIDO] Usar função própria em vez de system()
+                if (search_for_keyword(full_path, keyword)) {
+                    child_results[child_count++] = documents[j].id;
+                }
+            }
+            
+            // Enviar resultados para o processo pai
+            write(pipes[i][1], &child_count, sizeof(int));
+            if (child_count > 0) {
+                write(pipes[i][1], child_results, sizeof(int) * child_count);
+            }
+            
+            close(pipes[i][1]);
+            exit(0);
+        } else {
+            // Processo pai
+            close(pipes[i][1]); // Fechar extremidade de escrita
+        }
+    }
+    
+    // Coletar resultados dos processos filhos
+    for (int i = 0; i < nr_processes; i++) {
+        int child_count;
+        read(pipes[i][0], &child_count, sizeof(int));
+        
+        if (child_count > 0) {
+            int child_results[child_count];
+            read(pipes[i][0], child_results, sizeof(int) * child_count);
+            
+            // Adicionar resultados ao array final
+            for (int j = 0; j < child_count && count < max_results; j++) {
+                doc_ids[count++] = child_results[j];
+            }
+        }
+        
+        close(pipes[i][0]);
+        waitpid(pids[i], NULL, 0); // Aguardar término do processo filho
     }
     
     return count;
@@ -272,9 +566,11 @@ int main(int argc, char *argv[]) {
                 case OP_SEARCH:
                     printf("Pesquisar documentos com palavra-chave: %s (processos: %d)\n", 
                            client_msg.keyword, client_msg.nr_processes);
+                    // [MODIFICADO] Adicionado parâmetro nr_processes para pesquisa paralela
                     server_response.doc_count = search_documents(client_msg.keyword, 
                                                                 server_response.doc_ids, 
-                                                                1024);
+                                                                1024,
+                                                                client_msg.nr_processes);
                     server_response.status = 0;
                     break;
                     
@@ -291,7 +587,6 @@ int main(int argc, char *argv[]) {
                     
                     // Encerrar o servidor
                     close(server_pipe);
-                    
                     exit(0);
                     break;
                     
@@ -315,7 +610,6 @@ int main(int argc, char *argv[]) {
         }
     }
     
-  
     close(server_pipe);
     
     return 0;
